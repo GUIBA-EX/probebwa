@@ -141,8 +141,13 @@ fn main() -> Result<()> {
             let quality_offset = if phred64 { PHRED64_OFFSET } else { PHRED33_OFFSET };
             let input_format = match inputformat.as_str() {
                 "fasta" => InputFormat::Fasta,
-                _ => InputFormat::Fastq,
+                "fastq" => InputFormat::Fastq,
+                other => return Err(anyhow!("--inputformat must be 'fastq' or 'fasta', got '{other}'")),
             };
+            match outputformat.as_str() {
+                "sam" | "bam" => {}
+                other => return Err(anyhow!("--outputformat must be 'sam' or 'bam', got '{other}'")),
+            }
             let read_group = readgroup.as_deref().map(ReadGroup::parse).transpose().map_err(|e| anyhow!(e))?;
             let contigs: Vec<(String, usize)> = GenomeIndex::load(&genome)?
                 .contigs.iter().map(|c| (c.name.clone(), c.length)).collect();

@@ -1,0 +1,34 @@
+[package]
+name = "probebwa"
+version = "0.1.0"
+edition = "2021"
+authors = ["probebwa contributors"]
+description = "Rust short-read mapper for aligning UCE (ultra-conserved element) bait/probe sequences to a reference genome"
+license = "CC-BY-NC-ND-4.0"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+memmap2 = "0.9"
+rayon = "1.10"
+flate2 = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+rustc-hash = "2.1"
+noodles-bam = "0.91.0"
+noodles-sam = "0.86.0"
+mimalloc = "0.1.52"
+
+# Optional: replace hand-rolled SW with rust-bio pairwise alignment
+# bio = { version = "2.2", optional = true }
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

@@ -1,0 +1,17 @@
+# Build for whatever CPU features the machine actually running `cargo
+# build` supports (rustc/LLVM detect this per build, so this is inherently
+# "adaptive" -- no extra detection logic needed). On a machine with AVX-512,
+# this lets the compiler auto-vectorize eligible loops (base counting,
+# genome unpacking, etc.) with it; on a machine without it, this degrades
+# gracefully to whatever that machine does have.
+#
+# Tradeoff: the resulting binary is tied to the CPU features of the machine
+# it was *built* on, not portable to a machine lacking any of them (it will
+# crash with an illegal-instruction fault, not silently run slower). This is
+# the right default for a tool that's compiled from source on the machine
+# that will run it (the normal case for this project); if you need to build
+# once and copy the binary to a different, less-capable machine, override
+# this with `RUSTFLAGS="-C target-cpu=x86-64-v2" cargo build --release` (or
+# whatever baseline the target machine actually guarantees) instead.
+[build]
+rustflags = ["-C", "target-cpu=native"]

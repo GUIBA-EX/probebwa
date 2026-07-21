@@ -232,5 +232,4 @@ cargo test --release
 
 ## 许可证
 
-CC BY-NC-ND 4.0(署名-非商业性使用-禁止演绎)。允许出于非商业目的复制、分享,
-但不允许商业使用,也不允许修改后再分发。完整条款见 [LICENSE](LICENSE)。
+GPLv3。完整条款见 [LICENSE](LICENSE)。

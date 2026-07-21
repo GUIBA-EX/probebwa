@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["probebwa contributors"]
 description = "Rust short-read mapper for aligning UCE (ultra-conserved element) bait/probe sequences to a reference genome"
-license = "CC-BY-NC-ND-4.0"
+license = "GPL-3.0-only"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

@@ -1,5 +1,7 @@
 # probebwa
 
+[![CI](https://github.com/GUIBA-EX/probebwa/actions/workflows/ci.yml/badge.svg)](https://github.com/GUIBA-EX/probebwa/actions/workflows/ci.yml)
+
 一个用 Rust 写的短读比对器,专门用于 UCE(超保守元件)探针/bait 设计流程里的
 比对环节——把候选探针/bait 序列比对到参考基因组,评估唯一性、检查是否落在
 重复区域、确认候选位点。核心是密集 k-mer 种子扩展、banded affine-gap 比对、
@@ -194,6 +196,13 @@ cargo test --release
 - `examples/profile_paired.rs`——一个手动跑的计时脚手架,拿真实 FASTQ 数据分别
   给配对末端映射的"共享种子+比对"部分和"shortlist/交叉比对"部分计时,定位
   性能改动该往哪投入;同样不算在测试套件里,用法见文件头注释。
+
+`.github/workflows/ci.yml` 在每次 push/PR 到 `main` 时自动跑
+`cargo build --release --all-targets`、`cargo test --release`、
+`cargo clippy --release --all-targets -- -D warnings`(`src/`/`tests/`/
+`examples/` 全部保持零 clippy 警告)。不包含 `cargo fmt --check`——现有代码
+没有统一跑过 rustfmt,贸然开启格式检查会先制造一次几乎全文件的格式化 diff,
+而不是真正捕获问题。
 
 ## 已知局限
 

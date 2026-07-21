@@ -45,7 +45,7 @@ fn scenario(seed: u64, run_len: usize, del_len: usize, n_errors: usize) -> (Stri
     let mut rng = Xorshift64(seed);
     let prefix = rng.gen_seq(200);
     let run_base = rng.base();
-    let run: String = if run_len > 1 { std::iter::repeat(run_base).take(run_len).collect() } else { rng.gen_seq(1) };
+    let run: String = if run_len > 1 { std::iter::repeat_n(run_base, run_len).collect() } else { rng.gen_seq(1) };
     let suffix = rng.gen_seq(200);
     let genome = format!("{prefix}{run}{suffix}");
 
@@ -105,7 +105,7 @@ fn evaluate(homopolymer_slope: f64, mismatch_floor: f64) -> (usize, usize) {
                     let dir = TempDir::new().unwrap();
                     let fasta = write_fasta(&dir, "ref.fa", "chr1", &genome);
                     let prefix = dir.path().join("ref");
-                    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[&fasta.to_str().unwrap().to_string()]).unwrap();
+                    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[fasta.to_str().unwrap()]).unwrap();
                     build_hash_table(prefix.to_str().unwrap(), prefix.to_str().unwrap()).unwrap();
                     // Flat Q10 throughout (not just the injected-error
                     // positions): a flat, sharply-differentiated quality

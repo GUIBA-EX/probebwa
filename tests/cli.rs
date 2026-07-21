@@ -48,7 +48,7 @@ fn test_bam_output_is_valid_bgzf_bam() {
     let genome_seq = Xorshift64(99).gen_seq(400);
     let fasta = write_fasta(&dir, "ref.fa", "chr1", &genome_seq);
     let prefix = dir.path().join("ref");
-    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[&fasta.to_str().unwrap().to_string()]).unwrap();
+    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[fasta.to_str().unwrap()]).unwrap();
     build_hash_table(prefix.to_str().unwrap(), prefix.to_str().unwrap()).unwrap();
 
     let read = genome_seq[40..80].to_string();
@@ -84,7 +84,7 @@ fn test_labelfilter_restricts_output_to_matching_read_ids() {
     let genome_seq = Xorshift64(100).gen_seq(400);
     let fasta = write_fasta(&dir, "ref.fa", "chr1", &genome_seq);
     let prefix = dir.path().join("ref");
-    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[&fasta.to_str().unwrap().to_string()]).unwrap();
+    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[fasta.to_str().unwrap()]).unwrap();
     build_hash_table(prefix.to_str().unwrap(), prefix.to_str().unwrap()).unwrap();
 
     let fastq = write_fastq(&dir, "reads.fq", &[
@@ -115,7 +115,7 @@ fn test_adapter_strip_trims_3prime_readthrough() {
     let genome_seq = Xorshift64(101).gen_seq(400);
     let fasta = write_fasta(&dir, "ref.fa", "chr1", &genome_seq);
     let prefix = dir.path().join("ref");
-    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[&fasta.to_str().unwrap().to_string()]).unwrap();
+    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[fasta.to_str().unwrap()]).unwrap();
     build_hash_table(prefix.to_str().unwrap(), prefix.to_str().unwrap()).unwrap();
 
     // A read that reads through into 20bp of adapter sequence past the true
@@ -151,7 +151,7 @@ fn test_index_produces_a_valid_bai_alongside_the_bam() {
     let genome_seq = Xorshift64(102).gen_seq(2000);
     let fasta = write_fasta(&dir, "ref.fa", "chr1", &genome_seq);
     let prefix = dir.path().join("ref");
-    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[&fasta.to_str().unwrap().to_string()]).unwrap();
+    build_genome_index("t", "t1", prefix.to_str().unwrap(), &[fasta.to_str().unwrap()]).unwrap();
     build_hash_table(prefix.to_str().unwrap(), prefix.to_str().unwrap()).unwrap();
 
     // Reads deliberately out of coordinate order in the input, so a

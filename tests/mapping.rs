@@ -362,7 +362,7 @@ fn test_synthetic_scale_mapping_accuracy() {
             bases[pos] = ['A', 'C', 'G', 'T'].into_iter().find(|&b| b != orig).unwrap();
         }
         let mut seq: String = bases.into_iter().collect();
-        let reverse = rng.next_u64() % 2 == 0;
+        let reverse = rng.next_u64().is_multiple_of(2);
         if reverse {
             seq = revcomp(&seq);
         }
@@ -452,7 +452,7 @@ fn test_paired_disambiguates_repeat_copy_via_anchor() {
     // mate1: a clean, unique 40bp read from the unique region -- the anchor.
     let read1 = Read {
         id: "pair1".to_string(),
-        sequence: DnaSeq::from_ascii(unique_a[0..40].as_bytes()),
+        sequence: DnaSeq::from_ascii(&unique_a.as_bytes()[0..40]),
         qualities: QualityScores { scores: vec![35u8; 40] },
         is_reverse: false,
     };

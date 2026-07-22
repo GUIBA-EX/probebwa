@@ -229,8 +229,28 @@ impl<'a> HashTableBuilder<'a> {
     /// build memory over the original nested-`Vec` design, since both
     /// representations were briefly alive at once, the opposite of the
     /// intended win).
+    ///
+    /// `max_count` is enforced *during* the scan via `seen_counts` (a plain
+    /// hash-to-count map, not a map of `Vec`s -- no per-key allocation), not
+    /// only after sorting. Found by code review: an earlier version of this
+    /// function collected every occurrence unconditionally into `pairs` and
+    /// only capped each group down to `max_count` after grouping -- on a
+    /// genome with a k-mer that recurs far beyond `max_count` (a transposon
+    /// or repeat family, easily hundreds of thousands of copies in a real
+    /// chromosome), that meant fully collecting and sorting all of them just
+    /// to discard all but the first `max_count` afterward, the exact
+    /// unbounded-memory-per-key problem this whole redesign exists to avoid
+    /// -- just relocated to a different phase of `build`. Didn't show up
+    /// against the E. coli benchmark (no repeat family anywhere near that
+    /// scale there), which is why it slipped through -- an argument for not
+    /// trusting a single small genome's numbers as proof of behavior at
+    /// chromosome scale.
     pub fn build(self) -> HashTable {
         let mut pairs: Vec<(u32, u64)> = Vec::new();
+        // Per-hash running count during the scan -- see doc above for why
+        // this (not just the post-sort `.min`) is what actually bounds
+        // memory for a hyper-repetitive k-mer.
+        let mut seen_counts: FxHashMap<u32, u32> = FxHashMap::default();
 
         for (cid, contig) in self.genome.contigs.iter().enumerate() {
             // Decode this contig's packed sequence once; the genome as a
@@ -247,7 +267,11 @@ impl<'a> HashTableBuilder<'a> {
                 let kmer = &seq[i..i + self.k];
                 if !HashTable::is_acgt_only(kmer) { continue; }
                 let hash = HashTable::hash_kmer(kmer);
-                pairs.push((hash, HashTable::pack_position(cid, i, Strand::Forward)));
+                let count = seen_counts.entry(hash).or_insert(0);
+                if (*count as usize) < self.max_count {
+                    pairs.push((hash, HashTable::pack_position(cid, i, Strand::Forward)));
+                    *count += 1;
+                }
             }
 
             // Index reverse-complement strand, explicitly tagged so lookups
@@ -258,14 +282,18 @@ impl<'a> HashTableBuilder<'a> {
                 let kmer = &rc[i..i + self.k];
                 if !HashTable::is_acgt_only(kmer) { continue; }
                 let hash = HashTable::hash_kmer(kmer);
-                let packed = HashTable::pack_position(cid, seq.len() - i - self.k, Strand::Reverse);
-                pairs.push((hash, packed));
+                let count = seen_counts.entry(hash).or_insert(0);
+                if (*count as usize) < self.max_count {
+                    let packed = HashTable::pack_position(cid, seq.len() - i - self.k, Strand::Reverse);
+                    pairs.push((hash, packed));
+                    *count += 1;
+                }
             }
         }
+        drop(seen_counts);
 
-        // Stable: preserves each hash's original scan-order run so the
-        // max_count cap below keeps the same entries the old per-key-Vec
-        // version did.
+        // Stable: preserves each hash's original scan-order run (now
+        // already capped at max_count per hash, see above).
         pairs.sort_by_key(|&(h, _)| h);
 
         let mut positions: Vec<u64> = Vec::with_capacity(pairs.len());
@@ -277,7 +305,7 @@ impl<'a> HashTableBuilder<'a> {
             let hash = pairs[i].0;
             let start = i;
             while i < pairs.len() && pairs[i].0 == hash { i += 1; }
-            let count = (i - start).min(self.max_count);
+            let count = i - start;
             let offset = positions.len() as u32;
             positions.extend(pairs[start..start + count].iter().map(|&(_, pos)| pos));
             table.insert(hash, (offset, count as u32));
@@ -371,5 +399,40 @@ mod tests {
         assert!(HashTable::is_acgt_only(b"ACGTacgtACGTACG"));
         assert!(!HashTable::is_acgt_only(b"ACGTNCGTACGTACG"));
         assert!(!HashTable::is_acgt_only(b"ACGTRCGTACGTACG")); // IUPAC ambiguity code
+    }
+
+    /// Regression test for the bug found in code review: `build()` must cap
+    /// a hyper-repetitive k-mer's stored occurrences *during* the scan, not
+    /// just after sorting -- otherwise a k-mer recurring far beyond
+    /// `max_count` (a tandem repeat here, a transposon family on a real
+    /// chromosome) gets fully collected only to have almost all of it
+    /// discarded afterward, defeating the point of capping it at all.
+    #[test]
+    fn max_count_caps_a_hyper_repetitive_kmer() {
+        let k = 15;
+        let repeat_unit = "ACGTACGTACGTACG"; // 15bp, periodic every 15bp
+        // 50 tandem copies: every 15th position (0, 15, 30, ...) re-hashes
+        // to the exact same k-mer, far more occurrences than max_count.
+        let seq = repeat_unit.repeat(50);
+        let contig = Contig::from_ascii("c1".to_string(), seq.as_bytes());
+        let genome = GenomeIndex {
+            species: "t".to_string(),
+            assembly: "t".to_string(),
+            total_length: contig.length,
+            contigs: vec![contig],
+        };
+
+        let max_count = 5;
+        let ht = HashTableBuilder::new(&genome).with_k(k).with_stride(1).with_max_count(max_count).build();
+
+        let hash = HashTable::hash_kmer(repeat_unit.as_bytes());
+        let bucket = ht.get(hash);
+        assert_eq!(
+            bucket.len(), max_count,
+            "expected the repeated k-mer's bucket to be capped at max_count \
+             ({max_count}); got {} -- the ~50 true occurrences in this genome \
+             should never all reach `pairs`",
+            bucket.len()
+        );
     }
 }

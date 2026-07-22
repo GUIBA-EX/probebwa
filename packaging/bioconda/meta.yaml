@@ -1,7 +1,8 @@
+{% set name = "probebwa" %}
 {% set version = "0.1.0" %}
 
 package:
-  name: probebwa
+  name: {{ name }}
   version: {{ version }}
 
 source:
@@ -11,12 +12,11 @@ source:
 build:
   number: 0
   run_exports:
-    - {{ pin_subpackage("probebwa", max_pin="x") }}
+    - {{ pin_subpackage(name, max_pin="x") }}
 
 requirements:
   build:
     - {{ compiler('rust') }}
-  run:
 
 test:
   commands:

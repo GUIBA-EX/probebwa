@@ -1,0 +1,37 @@
+{% set version = "0.1.0" %}
+
+package:
+  name: probebwa
+  version: {{ version }}
+
+source:
+  url: https://github.com/GUIBA-EX/probebwa/archive/refs/tags/v{{ version }}.tar.gz
+  sha256: bbadc607b6d5bd1cdf41a4ab9416717da472df56ee4f500d800026c2961a5b5d
+
+build:
+  number: 0
+  run_exports:
+    - {{ pin_subpackage("probebwa", max_pin="x") }}
+
+requirements:
+  build:
+    - {{ compiler('rust') }}
+  run:
+
+test:
+  commands:
+    - probebwa --help
+
+about:
+  home: https://github.com/GUIBA-EX/probebwa
+  license: GPL-3.0-only
+  license_file: LICENSE
+  summary: Rust mapper for aligning UCE (ultra-conserved element) bait/probe sequences to a reference genome
+  dev_url: https://github.com/GUIBA-EX/probebwa
+
+extra:
+  additional-platforms:
+    - linux-aarch64
+    - osx-arm64
+  recipe-maintainers:
+    - GUIBA-EX

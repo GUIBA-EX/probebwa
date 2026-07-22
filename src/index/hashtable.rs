@@ -7,7 +7,6 @@
 //!   "splitmix"/"murmur finalizer" family) so that hash buckets aren't
 //!   skewed by DNA's compositional bias (poly-A/T runs etc.); a raw 2-bit
 //!   packing alone would cluster low-complexity sequence into a few buckets.
-//! - FxHashMap<u32, Vec<u64>> for fast lookups (rustc-hash).
 //! - Each occurrence is packed into a u64: bit 63 = strand (0=forward,
 //!   1=reverse-complement), bits 62..40 = contig id (23 bits → 8.3M contigs),
 //!   bits 39..0 = position (40 bits → up to ~1.1 trillion bp per contig,
@@ -18,6 +17,26 @@
 //! - High-frequency (repetitive) k-mers are capped at `max_count` entries per
 //!   bucket — an unbounded bucket would make lookups near centromeres/
 //!   transposons blow up, so entries beyond the cap are simply dropped.
+//! - **Flat shared position store, not one `Vec<u64>` per bucket.** Storing
+//!   `FxHashMap<u32, Vec<u64>>` directly (as this module used to) means one
+//!   separate heap allocation per distinct k-mer -- for a real genome that's
+//!   millions of small `Vec`s, fragmenting memory and scattering lookups
+//!   across the heap. Instead `table` maps each hash to an `(offset, count)`
+//!   pair into one contiguous `positions: Vec<u64>` shared by every bucket:
+//!   one allocation for the whole table's occurrence data and better cache
+//!   locality on lookup (a hit's positions are already one contiguous slice
+//!   read). `HashTableBuilder::build` gets there by collecting every
+//!   occurrence into one flat `Vec<(hash, position)>` as it scans (no
+//!   per-key `Vec` ever exists) and doing a single stable sort by hash to
+//!   group same-key runs together -- see that function's doc for why this
+//!   sort-based approach replaced an earlier version that built a
+//!   `FxHashMap<u32, Vec<u64>>` first and flattened it afterward (that
+//!   intermediate version measured *higher* peak build memory than the
+//!   original design, the opposite of the intended win, since both
+//!   representations were briefly alive at once).
+//!   (Approach independently arrived at; the same shared-flat-array idea is
+//!   also used by other k-mer indexing tools, e.g. minimap2-style bucketed
+//!   hash indices.)
 
 use crate::types::*;
 use crate::index::GenomeIndex;
@@ -39,8 +58,12 @@ const CONTIG_MASK: u64 = (1 << CONTIG_BITS) - 1;
 
 #[derive(Serialize, Deserialize)]
 pub struct HashTable {
-    /// Pseudo-randomized 15-mer hash → packed (strand, contig, position) entries.
-    pub table: FxHashMap<u32, Vec<u64>>,
+    /// Pseudo-randomized 15-mer hash → `(offset, count)` into `positions`.
+    table: FxHashMap<u32, (u32, u32)>,
+    /// Flat store for every bucket's packed occurrences, shared across all
+    /// hashes -- see module docs for why this replaces one `Vec<u64>` per
+    /// bucket.
+    positions: Vec<u64>,
     pub k: usize,
     pub seed_stride: usize,
     pub total_entries: usize,
@@ -65,7 +88,17 @@ impl HashTable {
 
     /// Lookup exact 15-mer, return packed positions.
     pub fn lookup(&self, kmer: &[u8]) -> &[u64] {
-        self.table.get(&Self::hash_kmer(kmer)).map(|v| v.as_slice()).unwrap_or(&[])
+        self.get(Self::hash_kmer(kmer))
+    }
+
+    /// Lookup by an already-computed hash, resolving `table`'s `(offset,
+    /// count)` into the corresponding slice of `positions`.
+    #[inline]
+    fn get(&self, hash: u32) -> &[u64] {
+        match self.table.get(&hash) {
+            Some(&(offset, count)) => &self.positions[offset as usize..(offset + count) as usize],
+            None => &[],
+        }
     }
 
     /// Pack ACGT into 2-bit representation (15-mer fits in 30 bits), then run
@@ -183,9 +216,21 @@ impl<'a> HashTableBuilder<'a> {
     /// Build the `HashTable` in memory without saving it -- the actual
     /// indexing logic; `build_and_save` is a thin wrapper, and this is what
     /// tests exercise directly to inspect the built table.
+    ///
+    /// Single-pass, sort-based build: every occurrence is pushed straight
+    /// into one flat `Vec<(hash, packed_position)>` as it's scanned (no
+    /// per-key `Vec` ever materializes), then a single stable sort by hash
+    /// groups same-key occurrences into contiguous runs -- stable so each
+    /// run keeps its original scan order, matching the "keep the first
+    /// `max_count` encountered" cap this always had. This avoids the
+    /// transient double bookkeeping an earlier version of this function had
+    /// (build a per-key `FxHashMap<u32, Vec<u64>>` first, then copy it into
+    /// the final flat form after the fact -- measured to *increase* peak
+    /// build memory over the original nested-`Vec` design, since both
+    /// representations were briefly alive at once, the opposite of the
+    /// intended win).
     pub fn build(self) -> HashTable {
-        let mut table: FxHashMap<u32, Vec<u64>> = FxHashMap::default();
-        let mut total_entries = 0usize;
+        let mut pairs: Vec<(u32, u64)> = Vec::new();
 
         for (cid, contig) in self.genome.contigs.iter().enumerate() {
             // Decode this contig's packed sequence once; the genome as a
@@ -202,11 +247,7 @@ impl<'a> HashTableBuilder<'a> {
                 let kmer = &seq[i..i + self.k];
                 if !HashTable::is_acgt_only(kmer) { continue; }
                 let hash = HashTable::hash_kmer(kmer);
-                let bucket = table.entry(hash).or_default();
-                if bucket.len() < self.max_count {
-                    bucket.push(HashTable::pack_position(cid, i, Strand::Forward));
-                    total_entries += 1;
-                }
+                pairs.push((hash, HashTable::pack_position(cid, i, Strand::Forward)));
             }
 
             // Index reverse-complement strand, explicitly tagged so lookups
@@ -217,17 +258,35 @@ impl<'a> HashTableBuilder<'a> {
                 let kmer = &rc[i..i + self.k];
                 if !HashTable::is_acgt_only(kmer) { continue; }
                 let hash = HashTable::hash_kmer(kmer);
-                let bucket = table.entry(hash).or_default();
-                if bucket.len() < self.max_count {
-                    let packed = HashTable::pack_position(cid, seq.len() - i - self.k, Strand::Reverse);
-                    bucket.push(packed);
-                    total_entries += 1;
-                }
+                let packed = HashTable::pack_position(cid, seq.len() - i - self.k, Strand::Reverse);
+                pairs.push((hash, packed));
             }
+        }
+
+        // Stable: preserves each hash's original scan-order run so the
+        // max_count cap below keeps the same entries the old per-key-Vec
+        // version did.
+        pairs.sort_by_key(|&(h, _)| h);
+
+        let mut positions: Vec<u64> = Vec::with_capacity(pairs.len());
+        let mut table: FxHashMap<u32, (u32, u32)> = FxHashMap::default();
+        let mut total_entries = 0usize;
+
+        let mut i = 0;
+        while i < pairs.len() {
+            let hash = pairs[i].0;
+            let start = i;
+            while i < pairs.len() && pairs[i].0 == hash { i += 1; }
+            let count = (i - start).min(self.max_count);
+            let offset = positions.len() as u32;
+            positions.extend(pairs[start..start + count].iter().map(|&(_, pos)| pos));
+            table.insert(hash, (offset, count as u32));
+            total_entries += count;
         }
 
         HashTable {
             table,
+            positions,
             k: self.k,
             seed_stride: self.stride,
             total_entries,
@@ -267,8 +326,8 @@ mod tests {
         //     decode any N-containing window as) contains no entry whose
         //     position falls in the N-run.
         let all_a_hash = HashTable::hash_kmer(&vec![b'A'; k]);
-        let all_a_bucket = ht.table.get(&all_a_hash).cloned().unwrap_or_default();
-        for &packed in &all_a_bucket {
+        let all_a_bucket = ht.get(all_a_hash);
+        for &packed in all_a_bucket {
             let (_, pos, strand) = HashTable::unpack_position(packed);
             if strand.is_forward() {
                 assert!(
@@ -281,7 +340,8 @@ mod tests {
         // Direct check: no forward-strand entry at any start position whose
         // window overlaps [20, 40) exists anywhere in the table.
         for start in 6..40 {
-            for bucket in ht.table.values() {
+            for &(offset, count) in ht.table.values() {
+                let bucket = &ht.positions[offset as usize..(offset + count) as usize];
                 for &packed in bucket {
                     let (_, pos, strand) = HashTable::unpack_position(packed);
                     if strand.is_forward() && pos == start {

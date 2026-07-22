@@ -8,6 +8,16 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Overrides `.cargo/config.toml`'s `-C target-cpu=native` (an env RUSTFLAGS
+  # replaces the config value entirely, it doesn't merge with it). On cloud
+  # VMs, LLVM's host-CPU detection can report features the hypervisor
+  # actually masks off, so a `target-cpu=native` build can emit instructions
+  # the runner then refuses at SIGILL -- a real failure mode other Rust
+  # bioinformatics projects have hit in CI (not hypothetical here just
+  # because it hasn't happened yet). Local/production builds are unaffected;
+  # this only weakens the compiler's codegen for the CI job itself, which
+  # isn't measuring performance anyway.
+  RUSTFLAGS: ""
 
 jobs:
   test:

@@ -106,7 +106,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         index: bool,
         /// Read file(s) to map: one file for single-ended, two (mate1 mate2) for paired-end.
-        #[arg(short = 'M', num_args = 1..=2)]
+        #[arg(short = 'M', num_args = 1..=2, required = true)]
         reads: Vec<String>,
     },
 }
@@ -149,11 +149,11 @@ fn main() -> Result<()> {
                 other => return Err(anyhow!("--outputformat must be 'sam' or 'bam', got '{other}'")),
             }
             let read_group = readgroup.as_deref().map(ReadGroup::parse).transpose().map_err(|e| anyhow!(e))?;
-            let contigs: Vec<(String, usize)> = GenomeIndex::load(&genome)?
-                .contigs.iter().map(|c| (c.name.clone(), c.length)).collect();
             let command_line = env::args().collect::<Vec<_>>().join(" ");
             let reads: Vec<&String> = reads.iter().collect();
             let mut records = map_reads_with_format(&genome, &hash, &reads, input_format, quality_offset, opts)?;
+            let contigs: Vec<(String, usize)> = GenomeIndex::load(&genome)?
+                .contigs.iter().map(|c| (c.name.clone(), c.length)).collect();
 
             if let Some(prefix) = &labelfilter {
                 records.retain(|r| r.read_id.starts_with(prefix.as_str()));

@@ -552,3 +552,46 @@ fn test_cross_contig_pairs_preserve_mate_coordinates() {
         assert_eq!(fields[8], "0");
     }
 }
+
+#[test]
+fn test_tlen_signs_for_equal_starts_and_swapped_mates() {
+    let dir = TempDir::new().unwrap();
+    let genome = Xorshift64(321).gen_seq(2000);
+    let fasta = write_fasta(&dir, "ref.fa", "chr1", &genome);
+    let prefix = build_index(&dir, &fasta, "ref");
+    for (start1, start2, length) in [(100, 100, 120), (100, 300, 320)] {
+        let first = write_fastq(&dir, "r1.fq", &[("pair".into(), genome[start1..start1 + 120].into())]);
+        let second = write_fastq(&dir, "r2.fq", &[("pair".into(), revcomp(&genome[start2..start2 + 120]))]);
+        for (files, pos1, pos2) in [([&first, &second], start1, start2), ([&second, &first], start2, start1)] {
+            let records = map_reads(&prefix, &prefix, &files, MapperOptions::default()).unwrap();
+            assert_eq!(records[0].position, pos1 + 1);
+            assert_eq!(records[1].position, pos2 + 1);
+            let signed = if pos1 <= pos2 { length } else { -length };
+            assert_eq!(records[0].insert_size, Some(signed));
+            assert_eq!(records[1].insert_size, Some(-signed));
+        }
+    }
+}
+
+#[test]
+fn test_mapping_validates_options_but_accepts_empty_files_and_rate_boundaries() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("missing");
+    let error = map_reads(&missing, &missing, &[], MapperOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("at least one read file"));
+    for rate in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.1] {
+        let options = MapperOptions { substitution_rate: rate, ..Default::default() };
+        let error = map_reads(&missing, &missing, &[&missing], options).unwrap_err();
+        assert!(error.to_string().contains("substitution rate must be finite"));
+    }
+    let genome = Xorshift64(322).gen_seq(400);
+    let fasta = write_fasta(&dir, "ref.fa", "chr1", &genome);
+    let prefix = build_index(&dir, &fasta, "ref");
+    let empty = write_fastq(&dir, "empty.fq", &[]);
+    let reads = write_fastq(&dir, "reads.fq", &[("read".into(), genome[40..160].into())]);
+    for rate in [0.0, 1.0] {
+        let options = MapperOptions { substitution_rate: rate, ..Default::default() };
+        assert!(map_reads(&prefix, &prefix, &[&empty], options.clone()).unwrap().is_empty());
+        assert_eq!(map_reads(&prefix, &prefix, &[&reads], options).unwrap().len(), 1);
+    }
+}

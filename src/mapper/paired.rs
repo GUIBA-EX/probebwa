@@ -222,8 +222,10 @@ impl<'a> PairedEndMapper<'a> {
             // Signed per SAM convention: positive for the upstream mate,
             // negative for the downstream one (matches `r1`/`r2` regardless
             // of which turned out to be upstream).
-            r1.insert_size = Some(if r1.position <= r2.position { insert_size } else { -insert_size });
-            r2.insert_size = Some(if r2.position <= r1.position { insert_size } else { -insert_size });
+            // Equal starts use read 1 as the positive end; signs must still differ.
+            let signed_size = if r1.position <= r2.position { insert_size } else { -insert_size };
+            r1.insert_size = Some(signed_size);
+            r2.insert_size = Some(-signed_size);
 
             // Only learn from pairs neither mate needed cross-alignment help
             // to place: feeding a rescued/shortlist-disambiguated mate's

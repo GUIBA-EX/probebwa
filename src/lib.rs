@@ -70,6 +70,9 @@ pub fn map_reads_with_format<P: AsRef<Path>>(
     quality_offset: u8,
     options: MapperOptions,
 ) -> Result<Vec<AlignmentRecord>> {
+    anyhow::ensure!(!read_files.is_empty(), "at least one read file is required");
+    anyhow::ensure!(options.substitution_rate.is_finite() && (0.0..=1.0).contains(&options.substitution_rate),
+        "substitution rate must be finite and between 0 and 1 (inclusive)");
     let genome = index::GenomeIndex::load(genome_prefix)?;
     let hash_table = index::HashTable::load(hash_prefix)?;
 

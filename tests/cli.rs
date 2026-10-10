@@ -221,3 +221,19 @@ fn test_map_help_has_no_short_option_conflict() {
         assert!(help.contains("--hash <HASH>"));
     }
 }
+
+#[test]
+fn test_map_requires_reads_and_rejects_invalid_rates_before_loading_index() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("missing");
+    let base = ["map", "--genome", missing.to_str().unwrap(), "--hash", missing.to_str().unwrap()];
+    let output = Command::new(probebwa_bin()).args(base).output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("-M"));
+    for rate in ["NaN", "inf", "-inf", "-0.1", "1.1"] {
+        let output = Command::new(probebwa_bin()).args(base)
+            .args(["-M", "reads.fq", &format!("--substitution-rate={rate}")]).output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("substitution rate must be finite"));
+    }
+}

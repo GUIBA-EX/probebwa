@@ -505,3 +505,50 @@ fn test_paired_disambiguates_repeat_copy_via_anchor() {
     assert!(r1.is_proper_pair && r2.is_proper_pair, "should be flagged as a proper pair once correctly placed");
     assert!(r2.mapq > 0, "disambiguated mate should still pass the entropy gate");
 }
+
+#[test]
+fn test_paired_names_must_match_after_normalization() {
+    let dir = TempDir::new().unwrap();
+    let genome = Xorshift64(123).gen_seq(400);
+    let fasta = write_fasta(&dir, "ref.fa", "chr1", &genome);
+    let prefix = build_index(&dir, &fasta, "ref");
+    let first = write_fastq(&dir, "r1.fq", &[("sampleA/1".into(), genome[40..80].into())]);
+    let second = write_fastq(&dir, "r2.fq", &[("sampleB/2".into(), revcomp(&genome[200..240]))]);
+    let error = map_reads(&prefix, &prefix, &[&first, &second], MapperOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("pair 1: 'sampleA' vs 'sampleB'"));
+    let second = write_fastq(&dir, "r2.fq", &[("sampleA/2".into(), revcomp(&genome[200..240]))]);
+    let records = map_reads(&prefix, &prefix, &[&first, &second], MapperOptions::default()).unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|r| r.read_id == "sampleA"));
+}
+
+#[test]
+fn test_cross_contig_pairs_preserve_mate_coordinates() {
+    let dir = TempDir::new().unwrap();
+    let mut rng = Xorshift64(137);
+    let chr1 = rng.gen_seq(2000);
+    let chr2 = rng.gen_seq(2000);
+    let fasta = dir.path().join("ref.fa");
+    fs::write(&fasta, format!(">chr1\n{chr1}\n>chr2\n{chr2}\n")).unwrap();
+    let prefix = build_index(&dir, &fasta, "ref");
+    let fq1 = write_fastq(&dir, "r1.fq", &[("cross/1".into(), chr1[100..220].into())]);
+    let fq2 = write_fastq(&dir, "r2.fq", &[("cross/2".into(), revcomp(&chr2[300..420]))]);
+    let records = map_reads(&prefix, &prefix, &[&fq1, &fq2], MapperOptions::default()).unwrap();
+    assert_eq!(records.len(), 2);
+    for (record, contig, pos, mate_contig, mate_pos) in [
+        (&records[0], "chr1", 101, "chr2", 301),
+        (&records[1], "chr2", 301, "chr1", 101),
+    ] {
+        assert_eq!(record.contig_name, contig);
+        assert_eq!(record.position, pos);
+        assert_eq!(record.mate_contig.as_deref(), Some(mate_contig));
+        assert_eq!(record.mate_position, Some(mate_pos));
+        assert!(!record.mate_unmapped);
+        assert!(!record.is_proper_pair);
+        let sam = io::format_sam(record, None);
+        let fields: Vec<_> = sam.split('\t').collect();
+        assert_eq!(fields[6], mate_contig);
+        assert_eq!(fields[7], mate_pos.to_string());
+        assert_eq!(fields[8], "0");
+    }
+}

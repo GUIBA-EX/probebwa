@@ -183,6 +183,16 @@ impl<'a> PairedEndMapper<'a> {
         r1.mate_strand = if r2_mapped { Some(r2.strand) } else { None };
         r2.mate_strand = if r1_mapped { Some(r1.strand) } else { None };
 
+        // Mate coordinates are independent of contig equality and proper-pair status.
+        if r2_mapped {
+            r1.mate_contig = Some(r2.contig_name.clone());
+            r1.mate_position = Some(r2.position);
+        }
+        if r1_mapped {
+            r2.mate_contig = Some(r1.contig_name.clone());
+            r2.mate_position = Some(r1.position);
+        }
+
         let mut observed_insert_size = None;
 
         if r1_mapped && r2_mapped && r1.contig_name == r2.contig_name {
@@ -209,10 +219,6 @@ impl<'a> PairedEndMapper<'a> {
 
             r1.is_proper_pair = is_proper;
             r2.is_proper_pair = is_proper;
-            r1.mate_contig = Some(r2.contig_name.clone());
-            r2.mate_contig = Some(r1.contig_name.clone());
-            r1.mate_position = Some(r2.position);
-            r2.mate_position = Some(r1.position);
             // Signed per SAM convention: positive for the upstream mate,
             // negative for the downstream one (matches `r1`/`r2` regardless
             // of which turned out to be upstream).

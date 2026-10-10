@@ -51,7 +51,7 @@ enum Commands {
     Map {
         #[arg(short, long)]
         genome: String,
-        #[arg(short, long)]
+        #[arg(long)]
         hash: String,
         #[arg(short, long, default_value_t = 0.001)]
         substitution_rate: f64,

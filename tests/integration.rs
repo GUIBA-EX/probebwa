@@ -151,3 +151,25 @@ fn test_divergent_region_does_not_invent_spurious_indels() {
     assert_eq!(indel_ops, 0, "a genuinely indel-free (mismatch-only) region shouldn't get spurious indels invented; got CIGAR {cigar:?}");
     assert_eq!(indel_bases, 0);
 }
+
+#[test]
+fn test_fastq_rejects_malformed_records() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("reads.fq");
+    for input in [
+        ">probe1\nACGT\n>probe2\nTGCA\n",
+        "@r\nACGT\n",
+        "@r\nACGT\n+\nIII\n",
+        "@r\nACGT\n+\nIIIII\n",
+        "@r\nACGT\n+\n III\n",
+        "@\nACGT\n+\nIIII\n",
+    ] {
+        std::fs::write(&path, input).unwrap();
+        assert!(io::read_fastq(&path, io::PHRED33_OFFSET).is_err(), "accepted {input:?}");
+    }
+    // Wrapped sequences/qualities and CRLF remain supported.
+    std::fs::write(&path, "@r description\r\nAC\r\nGT\r\n+\r\nI?\r\n+!\r\n").unwrap();
+    let reads = io::read_fastq(&path, io::PHRED33_OFFSET).unwrap();
+    assert_eq!(reads[0].sequence.bases, b"ACGT");
+    assert_eq!(reads[0].qualities.scores, [40, 30, 10, 0]);
+}

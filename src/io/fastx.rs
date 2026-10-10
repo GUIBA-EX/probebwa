@@ -145,6 +145,8 @@ pub fn read_fastq<P: AsRef<Path>>(path: P, quality_offset: u8) -> Result<Vec<Rea
         let rec = record?;
         let id = String::from_utf8_lossy(&rec.id).to_string();
         let seq = DnaSeq::from_ascii(&rec.seq);
+        anyhow::ensure!(rec.qual.iter().all(|&q| q >= quality_offset && q <= 126),
+            "FASTQ record {id}: invalid quality encoding");
         let qual = QualityScores::from_phred_ascii(&rec.qual, quality_offset);
         reads.push(Read { id, sequence: seq, qualities: qual, is_reverse: false });
     }
@@ -260,15 +262,22 @@ impl<R: BufRead> FastqParser<R> {
             Ok(_) => {}
             Err(e) => return Some(Err(e.into())),
         }
+        if !self.buf.starts_with('@') {
+            return Some(Err(anyhow::anyhow!("expected FASTQ header starting with @; for FASTA use --inputformat fasta")));
+        }
         let id = self.buf.trim_start_matches('@')
             .split_whitespace().next().unwrap_or("").as_bytes().to_vec();
+
+        if id.is_empty() {
+            return Some(Err(anyhow::anyhow!("FASTQ record has an empty ID")));
+        }
 
         // Sequence line(s)
         self.buf.clear();
         let mut seq = Vec::new();
         loop {
             match self.reader.read_line(&mut self.buf) {
-                Ok(0) => break,
+                Ok(0) => return Some(Err(anyhow::anyhow!("truncated FASTQ record"))),
                 Ok(_) => {
                     let line = self.buf.trim();
                     if line.starts_with('+') {
@@ -290,9 +299,9 @@ impl<R: BufRead> FastqParser<R> {
         let mut qual = Vec::new();
         loop {
             match self.reader.read_line(&mut self.buf) {
-                Ok(0) => break,
+                Ok(0) => return Some(Err(anyhow::anyhow!("truncated FASTQ record"))),
                 Ok(_) => {
-                    qual.extend(self.buf.trim().bytes());
+                    qual.extend(self.buf.trim_end_matches(['\r', '\n']).bytes());
                     self.buf.clear();
                     if qual.len() >= seq.len() { break; }
                 }
@@ -300,6 +309,9 @@ impl<R: BufRead> FastqParser<R> {
             }
         }
 
+        if qual.len() != seq.len() {
+            return Some(Err(anyhow::anyhow!("FASTQ sequence and quality lengths differ")));
+        }
         Some(Ok(FastqRecord { id, seq, qual }))
     }
 }

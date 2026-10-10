@@ -37,6 +37,7 @@ impl ReadGroup {
 pub fn format_sam(rec: &AlignmentRecord, read_group_id: Option<&str>) -> String {
     let cigar: String = rec.cigar.iter().map(|c| c.to_string()).collect();
     let flag = sam_flag(rec);
+    let qualities: String = rec.read_qualities.iter().map(|&q| char::from(q + 33)).collect();
     let mut line = format!(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         rec.read_id,
@@ -48,8 +49,8 @@ pub fn format_sam(rec: &AlignmentRecord, read_group_id: Option<&str>) -> String 
         rec.mate_contig.as_deref().unwrap_or("*"),
         rec.mate_position.unwrap_or(0),
         rec.insert_size.unwrap_or(0),
-        String::from_utf8_lossy(&rec.read_sequence),
-        String::from_utf8_lossy(&rec.read_qualities),
+        if rec.read_sequence.is_empty() { "*".into() } else { String::from_utf8_lossy(&rec.read_sequence) },
+        if qualities.is_empty() { "*" } else { &qualities },
     );
     if let Some(id) = read_group_id {
         write!(line, "\tRG:Z:{id}").unwrap();

@@ -53,6 +53,9 @@ fn test_bam_output_is_valid_bgzf_bam() {
 
     let read = genome_seq[40..80].to_string();
     let fastq = write_fastq(&dir, "reads.fq", &[("r1".to_string(), read)]);
+    // Include qualities that previously became control characters in SAM.
+    let qualities = "I?+!".repeat(10);
+    fs::write(&fastq, format!("@r1\n{}\n+\n{qualities}\n", &genome_seq[40..80])).unwrap();
     let bam_path = dir.path().join("out.bam");
 
     let status = Command::new(probebwa_bin())
@@ -67,6 +70,21 @@ fn test_bam_output_is_valid_bgzf_bam() {
         .status()
         .unwrap();
     assert!(status.success());
+
+    let mut reader = noodles_bam::io::Reader::new(fs::File::open(&bam_path).unwrap());
+    let header = reader.read_header().unwrap();
+    let mut record = noodles_sam::alignment::RecordBuf::default();
+    assert!(reader.read_record_buf(&header, &mut record).unwrap() > 0);
+    assert_eq!(record.quality_scores().as_ref(), [40, 30, 10, 0].repeat(10));
+
+    let sam = Command::new(probebwa_bin())
+        .args(["map", "--genome", prefix.to_str().unwrap(), "--hash", prefix.to_str().unwrap(),
+            "-M", fastq.to_str().unwrap()])
+        .output().unwrap();
+    assert!(sam.status.success());
+    let sam = String::from_utf8(sam.stdout).unwrap();
+    let fields: Vec<_> = sam.lines().find(|line| line.starts_with("r1\t")).unwrap().split('\t').collect();
+    assert_eq!(fields[10], qualities);
 
     let compressed = fs::read(&bam_path).unwrap();
     // BGZF blocks are valid gzip members; the standard `gzip` crate decodes
@@ -192,4 +210,14 @@ fn test_index_produces_a_valid_bai_alongside_the_bam() {
     let late_pos = decompressed.windows(4).position(|w| w == b"late");
     assert!(early_pos.is_some() && late_pos.is_some());
     assert!(early_pos < late_pos, "coordinate-sorted BAM should have the lower-position read first");
+}
+
+#[test]
+fn test_map_help_has_no_short_option_conflict() {
+    for flag in ["-h", "--help"] {
+        let output = Command::new(probebwa_bin()).args(["map", flag]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let help = String::from_utf8(output.stdout).unwrap();
+        assert!(help.contains("--hash <HASH>"));
+    }
 }

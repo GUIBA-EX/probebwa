@@ -61,7 +61,7 @@ pub fn map_reads<P: AsRef<Path>>(
 /// Follows the common short-read aligner convention of "two read files means
 /// paired-end": exactly two read files triggers paired-end mapping, with
 /// mate 1 and mate 2 read from the two files in lockstep (paired by stream
-/// order, not by matching read IDs); any other count is single-ended.
+/// order, with matching normalized IDs required); any other count is single-ended.
 pub fn map_reads_with_format<P: AsRef<Path>>(
     genome_prefix: P,
     hash_prefix: P,
@@ -73,20 +73,20 @@ pub fn map_reads_with_format<P: AsRef<Path>>(
     let genome = index::GenomeIndex::load(genome_prefix)?;
     let hash_table = index::HashTable::load(hash_prefix)?;
 
-    if read_files.len() == 2 {
-        return map_paired(&genome, &hash_table, &read_files[0], &read_files[1], input_format, quality_offset, &options);
-    }
+    let read_files: Vec<&Path> = read_files.iter().map(AsRef::as_ref).collect();
+    let map_all = || -> Result<Vec<AlignmentRecord>> {
+        if read_files.len() == 2 {
+            return map_paired(&genome, &hash_table, &read_files[0], &read_files[1], input_format, quality_offset, &options);
+        }
 
-    let preprocessing = io::ReadPreprocessing { casava8: options.casava8, adapter: options.adapter_strip.clone() };
-    let reads = io::read_reads_files_with_preprocessing(read_files, input_format, quality_offset, &preprocessing)?;
+        let preprocessing = io::ReadPreprocessing { casava8: options.casava8, adapter: options.adapter_strip.clone() };
+        let reads = io::read_reads_files_with_preprocessing(&read_files, input_format, quality_offset, &preprocessing)?;
 
-    use rayon::prelude::*;
-    let single_mapper = mapper::SingleEndMapper::new(&genome, &hash_table, &options);
-
-    let map_all = || -> Vec<AlignmentRecord> {
-        reads.par_iter()
+        use rayon::prelude::*;
+        let single_mapper = mapper::SingleEndMapper::new(&genome, &hash_table, &options);
+        Ok(reads.par_iter()
             .map(|read| single_mapper.map(read).unwrap_or_else(|_| mapper::single::unmapped_record(read)))
-            .collect()
+            .collect())
     };
 
     // `--threads` controls parallelism: run inside a scoped pool sized to
@@ -94,16 +94,14 @@ pub fn map_reads_with_format<P: AsRef<Path>>(
     // threads >= 1 pins the pool to exactly that many workers (so `-t 1` is
     // genuinely serial, as the CLI's default implies); threads == 0 means
     // "let rayon use all available cores".
-    let records = if options.threads >= 1 {
+    if options.threads >= 1 {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(options.threads)
             .build()?;
         pool.install(map_all)
     } else {
         map_all()
-    };
-
-    Ok(records)
+    }
 }
 
 /// How many read pairs `map_paired` processes per parallel batch (see
@@ -159,6 +157,11 @@ fn map_paired<P: AsRef<Path>>(
         "paired-end input files have different read counts ({} vs {})",
         reads1.len(), reads2.len()
     );
+
+    for (i, (read1, read2)) in reads1.iter().zip(&reads2).enumerate() {
+        anyhow::ensure!(read1.id == read2.id,
+            "paired-end read IDs differ at pair {}: '{}' vs '{}'", i + 1, read1.id, read2.id);
+    }
 
     let mut paired_mapper = mapper::PairedEndMapper::new(genome, hash_table, options);
     let mut records = Vec::with_capacity(reads1.len() * 2);

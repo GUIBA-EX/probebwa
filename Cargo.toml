@@ -1,6 +1,6 @@
 [package]
 name = "probebwa"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["probebwa contributors"]
 description = "Rust short-read mapper for aligning UCE (ultra-conserved element) bait/probe sequences to a reference genome"

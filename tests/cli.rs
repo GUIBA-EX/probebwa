@@ -43,6 +43,17 @@ fn probebwa_bin() -> &'static str {
 }
 
 #[test]
+fn test_insert_distribution_options_are_validated_before_loading_index() {
+    for (flag, value) in [("--insertsd", "0"), ("--insertsd", "NaN"), ("--insertsize", "inf")] {
+        let output = Command::new(probebwa_bin()).args([
+            "map", "--genome", "absent", "--hash", "absent", flag, value, "-M", "reads.fq",
+        ]).output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("insert size"));
+    }
+}
+
+#[test]
 fn test_bam_output_is_valid_bgzf_bam() {
     let dir = TempDir::new().unwrap();
     let genome_seq = Xorshift64(99).gen_seq(400);

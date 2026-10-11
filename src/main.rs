@@ -69,6 +69,12 @@ enum Commands {
         /// paired-end candidates.
         #[arg(long, default_value_t = 55.0)]
         svprior: f64,
+        /// Initial fragment length mean (Stampy --insertsize).
+        #[arg(long, default_value_t = 250.0)]
+        insertsize: f64,
+        /// Initial fragment length SD (Stampy 1.0.32 executable default: 80).
+        #[arg(long, default_value_t = 80.0)]
+        insertsd: f64,
         /// Input quality encoding is Solexa/Illumina 1.0-1.3 (Phred+64) instead of Sanger (Phred+33).
         #[arg(long, default_value_t = false)]
         phred64: bool,
@@ -127,13 +133,15 @@ fn main() -> Result<()> {
             build_hash_table(&genome, &output)?;
             println!("Done. Hash table written to {}.sthash", output);
         }
-        Commands::Map { genome, hash, substitution_rate, threads, gapopen, gapextend, svprior, phred64, inputformat, readgroup, outputformat, output, labelfilter, casava8, adapter_strip, index, reads } => {
+        Commands::Map { genome, hash, substitution_rate, threads, gapopen, gapextend, svprior, insertsize, insertsd, phred64, inputformat, readgroup, outputformat, output, labelfilter, casava8, adapter_strip, index, reads } => {
             let opts = MapperOptions {
                 substitution_rate,
                 threads,
                 gap_open_phred: gapopen,
                 gap_extend_phred: gapextend,
                 sv_prior_phred: svprior,
+                insert_size_mean: insertsize,
+                insert_size_sd: insertsd,
                 casava8,
                 adapter_strip: adapter_strip.map(|s| s.into_bytes()),
                 ..Default::default()
@@ -144,6 +152,7 @@ fn main() -> Result<()> {
                 "fastq" => InputFormat::Fastq,
                 other => return Err(anyhow!("--inputformat must be 'fastq' or 'fasta', got '{other}'")),
             };
+
             match outputformat.as_str() {
                 "sam" | "bam" => {}
                 other => return Err(anyhow!("--outputformat must be 'sam' or 'bam', got '{other}'")),
@@ -152,8 +161,8 @@ fn main() -> Result<()> {
             let command_line = env::args().collect::<Vec<_>>().join(" ");
             let reads: Vec<&String> = reads.iter().collect();
             let mut records = map_reads_with_format(&genome, &hash, &reads, input_format, quality_offset, opts)?;
-            let contigs: Vec<(String, usize)> = GenomeIndex::load(&genome)?
-                .contigs.iter().map(|c| (c.name.clone(), c.length)).collect();
+            let reference = GenomeIndex::load(&genome)?;
+            let contigs: Vec<(String, usize)> = reference.contigs.iter().map(|c| (c.name.clone(), c.length)).collect();
 
             if let Some(prefix) = &labelfilter {
                 records.retain(|r| r.read_id.starts_with(prefix.as_str()));
@@ -174,6 +183,8 @@ fn main() -> Result<()> {
             } else {
                 format_sam_records(&records, &contigs, &command_line, read_group.as_ref())
             };
+
+            let sam_text = probebwa::io::sam::with_reference_metadata(&sam_text, &reference.assembly, &reference.species);
 
             match outputformat.as_str() {
                 "bam" => {

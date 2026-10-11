@@ -15,16 +15,14 @@
 //!     index that coincides with `read_pos` at a true match, so
 //!     `ref_pos + read_pos = genome_start + read_len - k`).
 //!
-//! Within each (contig, strand) group, hits are sorted by diagonal and merged
-//! with a sliding window (consecutive hits within `MERGE_DISTANCE` join the
-//! same cluster) rather than binned into a fixed-width grid — a fixed grid
-//! can split hits from one true locus across a bin boundary.
+//! Native overhang=2 clustering measures distance from the cluster's first
+//! anchor. Consecutive-hit chaining can merge arbitrarily distant loci.
 
 use crate::types::*;
 use rustc_hash::FxHashMap;
 
-/// Max gap between consecutive sorted diagonals to still merge into one cluster.
-const MERGE_DISTANCE: i64 = 50;
+/// Exclusive diagonal span, matching native overhang=2.
+const MERGE_DISTANCE: i64 = 2;
 
 /// Cluster seed hits into candidate mapping positions.
 pub fn cluster_hits(hits: &[SeedHit], read_len: usize) -> Vec<Candidate> {
@@ -44,21 +42,21 @@ pub fn cluster_hits(hits: &[SeedHit], read_len: usize) -> Vec<Candidate> {
     let mut candidates: Vec<Candidate> = Vec::new();
 
     for ((cid, strand), mut diag_hits) in groups {
-        diag_hits.sort_by_key(|(d, _)| *d);
+        diag_hits.sort_by_key(|(d, _)| if strand == Strand::Reverse { -*d } else { *d });
 
         let mut cluster_start = 0usize;
         for idx in 1..=diag_hits.len() {
             let boundary = idx == diag_hits.len()
-                || diag_hits[idx].0 - diag_hits[idx - 1].0 > MERGE_DISTANCE;
+                || (diag_hits[idx].0 - diag_hits[cluster_start].0).abs() >= MERGE_DISTANCE;
             if boundary {
                 let group = &diag_hits[cluster_start..idx];
-                let avg_diag = group.iter().map(|(d, _)| *d).sum::<i64>() / group.len() as i64;
+                let anchor_diag = group[0].0;
 
                 // Forward: diagonal already equals the genome start position.
                 // Reverse: genome start = diagonal - read_len + k.
                 let position = match strand {
-                    Strand::Forward => avg_diag,
-                    Strand::Reverse => avg_diag - read_len as i64 + group[0].1.k as i64,
+                    Strand::Forward => anchor_diag,
+                    Strand::Reverse => anchor_diag - read_len as i64 + group[0].1.k as i64,
                 };
 
                 candidates.push(Candidate {

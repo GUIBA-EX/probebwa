@@ -38,20 +38,24 @@ pub fn format_sam(rec: &AlignmentRecord, read_group_id: Option<&str>) -> String 
     let cigar: String = rec.cigar.iter().map(|c| c.to_string()).collect();
     let flag = sam_flag(rec);
     let qualities: String = rec.read_qualities.iter().map(|&q| char::from(q + 33)).collect();
+    let chromosome = if rec.position == 0 { rec.mate_contig.as_deref().unwrap_or("*") } else { &rec.contig_name };
+    let mate_chromosome = rec.mate_contig.as_deref().unwrap_or("*");
+    let mate_chromosome = if mate_chromosome != "*" && mate_chromosome == chromosome { "=" } else { mate_chromosome };
     let mut line = format!(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         rec.read_id,
         flag,
-        rec.contig_name,
-        rec.position,
+        chromosome,
+        if rec.position == 0 { rec.mate_position.unwrap_or(0) } else { rec.position },
         rec.mapq,
         if cigar.is_empty() { "*".to_string() } else { cigar },
-        rec.mate_contig.as_deref().unwrap_or("*"),
+        mate_chromosome,
         rec.mate_position.unwrap_or(0),
         rec.insert_size.unwrap_or(0),
         if rec.read_sequence.is_empty() { "*".into() } else { String::from_utf8_lossy(&rec.read_sequence) },
         if qualities.is_empty() { "*" } else { &qualities },
     );
+    for tag in &rec.sam_tags { write!(line, "\t{tag}").unwrap(); }
     if let Some(id) = read_group_id {
         write!(line, "\tRG:Z:{id}").unwrap();
     }
@@ -90,7 +94,7 @@ pub fn format_sam_records_sorted(
 ) -> String {
     let mut out = String::new();
     let sort_order = if coordinate_sorted { "coordinate" } else { "unsorted" };
-    writeln!(out, "@HD\tVN:1.6\tSO:{sort_order}").unwrap();
+    writeln!(out, "@HD\tVN:1.0\tSO:{sort_order}").unwrap();
     for (name, length) in contigs {
         writeln!(out, "@SQ\tSN:{name}\tLN:{length}").unwrap();
     }
@@ -109,18 +113,17 @@ pub fn format_sam_records_sorted(
 }
 
 /// Sort `records` into coordinate order (reference index per `contigs`'
-/// order, then position), the order a BAM index requires. Unmapped records
-/// (`position == 0`) sort last, per SAM/BAM convention (they have no
-/// meaningful coordinate to place in the index).
+/// order, then the actual emitted position), as required for BAM indexing.
+/// Unmapped mates with copied coordinates sort at that coordinate; only records
+/// without any coordinate sort last.
 pub fn sort_for_coordinate_order(records: &mut [AlignmentRecord], contigs: &[(String, usize)]) {
     let contig_index: std::collections::HashMap<&str, usize> = contigs.iter()
         .enumerate().map(|(i, (name, _))| (name.as_str(), i)).collect();
     records.sort_by_key(|r| {
-        if r.position == 0 {
-            (usize::MAX, usize::MAX)
-        } else {
-            (contig_index.get(r.contig_name.as_str()).copied().unwrap_or(usize::MAX), r.position)
-        }
+        let (name,position) = if r.position == 0 {
+            (r.mate_contig.as_deref().unwrap_or("*"),r.mate_position.unwrap_or(usize::MAX))
+        } else { (r.contig_name.as_str(),r.position) };
+        (contig_index.get(name).copied().unwrap_or(usize::MAX),position)
     });
 }
 
@@ -141,4 +144,18 @@ fn sam_flag(rec: &AlignmentRecord) -> u16 {
         _ => {}
     }
     flag
+}
+
+/// Preserve the assembly/species recorded when the reference was indexed.
+pub fn with_reference_metadata(sam: &str, assembly: &str, species: &str) -> String {
+    let mut output=String::with_capacity(sam.len());
+    for line in sam.lines() {
+        output.push_str(line);
+        if line.starts_with("@SQ\t") {
+            if !assembly.is_empty() { write!(output,"\tAS:{assembly}").unwrap(); }
+            if !species.is_empty() { write!(output,"\tSP:{species}").unwrap(); }
+        }
+        output.push('\n');
+    }
+    output
 }

@@ -48,3 +48,24 @@ pub fn parse_cigar(s: &str) -> Vec<CigarOp> {
     }
     ops
 }
+
+/// Convert full-read alignment strings to CIGAR without losing terminal gaps.
+pub fn cigar_from_alignment(read: &[u8], reference: &[u8]) -> Option<Vec<CigarOp>> {
+    if read.len() != reference.len() { return None; }
+    let mut ops = Vec::new();
+    for (&a, &b) in read.iter().zip(reference) {
+        let op = match (a == b'-', b == b'-') {
+            (true, true) => return None,
+            (true, false) => CigarOp::Deletion(1),
+            (false, true) => CigarOp::Insertion(1),
+            (false, false) => CigarOp::Match(1),
+        };
+        match (ops.last_mut(), &op) {
+            (Some(CigarOp::Match(n)), CigarOp::Match(_)) |
+            (Some(CigarOp::Insertion(n)), CigarOp::Insertion(_)) |
+            (Some(CigarOp::Deletion(n)), CigarOp::Deletion(_)) => *n += 1,
+            _ => ops.push(op),
+        }
+    }
+    Some(ops)
+}

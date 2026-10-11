@@ -200,6 +200,8 @@ pub struct AlignmentRecord {
     pub mate_strand: Option<Strand>,
     /// True if this read is paired but its mate did not map (SAM FLAG 0x8).
     pub mate_unmapped: bool,
+    /// Optional SAM fields, also preserved by the BAM writer.
+    pub sam_tags: Vec<String>,
 }
 
 /// Mapper runtime options.
@@ -235,7 +237,7 @@ impl Default for MapperOptions {
         Self {
             substitution_rate: 0.001,
             insert_size_mean: 250.0,
-            insert_size_sd: 60.0,
+            insert_size_sd: 80.0,
             max_indel_len: 30,
             threads: 1,
             output_format: OutputFormat::Sam,
@@ -267,4 +269,6 @@ pub struct InsertSizeDistribution {
     pub mean: f64,
     pub sd: f64,
     pub n_observed: usize,
+    pub(crate) distance_sum: f64,
+    pub(crate) distance_square_sum: f64,
 }

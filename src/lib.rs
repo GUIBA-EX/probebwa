@@ -73,6 +73,9 @@ pub fn map_reads_with_format<P: AsRef<Path>>(
     anyhow::ensure!(!read_files.is_empty(), "at least one read file is required");
     anyhow::ensure!(options.substitution_rate.is_finite() && (0.0..=1.0).contains(&options.substitution_rate),
         "substitution rate must be finite and between 0 and 1 (inclusive)");
+    anyhow::ensure!(options.insert_size_mean.is_finite(), "insert size mean must be finite");
+    anyhow::ensure!(options.insert_size_sd.is_finite() && options.insert_size_sd > 0.0,
+        "insert size SD must be finite and positive");
     let genome = index::GenomeIndex::load(genome_prefix)?;
     let hash_table = index::HashTable::load(hash_prefix)?;
 
@@ -107,42 +110,11 @@ pub fn map_reads_with_format<P: AsRef<Path>>(
     }
 }
 
-/// How many read pairs `map_paired` processes per parallel batch (see
-/// `mapper::PairedEndMapper::map_pairs_batch`). Each batch freezes the
-/// insert-size model at its current estimate for the whole batch, so this is
-/// a tradeoff: larger batches mean more parallelism per `rayon` dispatch
-/// (less scheduling overhead relative to work), but let the model go longer
-/// between updates. 2000 is small relative to the number of observations
-/// (typically thousands) it usually takes for the model to have converged
-/// and stabilized in the first place, so the staleness this introduces is
-/// negligible in practice for any run long enough for batching to matter --
-/// *after* the warm-up prefix below, which is what actually keeps the first
-/// batch from being scored against a completely unconverged model.
+/// Bound candidate memory while seeding pairs in parallel. Pair decisions
+/// and library updates remain in input order, independent of chunk size.
 const PAIR_BATCH_SIZE: usize = 2000;
 
-/// How many pairs `map_paired` processes strictly serially (via `map_pair`,
-/// updating the insert-size model after every pair as it goes) before
-/// switching to parallel batching. Comparing batched output against the old
-/// fully-serial baseline on real E. coli data found that without this, the
-/// *entire first batch* is scored against the model's untouched initial
-/// prior (`--insertsize`/`--insertsd`, default 250/60) -- unlike every
-/// subsequent batch, which at least starts from a model already refined by
-/// every prior batch, the first batch has nothing to inherit from, so
-/// batching's usual "stale by at most one batch" framing understates its
-/// actual cost there. A serial warm-up prefix bounds that cold-start cost to
-/// a small fixed prefix instead of a full batch, at a small fixed cost (500
-/// pairs processed without the cross-pair parallelism batching provides,
-/// negligible against a real run's total size).
-const PAIR_WARMUP_SIZE: usize = 500;
-
-/// Paired-end mapping path. A short prefix is processed serially to warm up
-/// the insert-size model (see `PAIR_WARMUP_SIZE`); the remainder runs in
-/// parallel batches (see `mapper::PairedEndMapper::map_pairs_batch`) -- the
-/// one thing that can't be parallelized across an unbounded number of pairs
-/// is the insert-size model's online learning
-/// (`InsertSizeDistribution::update`), which needs a consistent,
-/// serially-updated shared state; batching (after warm-up) bounds that to
-/// "stale by at most one batch" instead of serializing the whole run.
+/// Paired mapping with parallel seeding and sequential model updates.
 fn map_paired<P: AsRef<Path>>(
     genome: &index::GenomeIndex,
     hash_table: &index::HashTable,
@@ -173,14 +145,7 @@ fn map_paired<P: AsRef<Path>>(
         .map(|(read1, read2)| ReadPair { read1, read2 })
         .collect();
 
-    let warmup_len = pairs.len().min(PAIR_WARMUP_SIZE);
-    for pair in &pairs[..warmup_len] {
-        let (r1, r2) = paired_mapper.map_pair(pair)?;
-        records.push(r1);
-        records.push(r2);
-    }
-
-    for batch in pairs[warmup_len..].chunks(PAIR_BATCH_SIZE) {
+    for batch in pairs.chunks(PAIR_BATCH_SIZE) {
         for (r1, r2) in paired_mapper.map_pairs_batch(batch) {
             records.push(r1);
             records.push(r2);
